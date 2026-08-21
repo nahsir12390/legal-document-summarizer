@@ -109,7 +109,7 @@
 
             <div class="glass rounded-3xl p-6 shadow-soft">
                 <h2 class="text-lg font-semibold text-ink mb-3">AI Insight Notes</h2>
-                <p class="text-sm text-slate-600">Every summary is generated locally with Ollama to keep sensitive Nigerian legal documents secure.</p>
+                <p class="text-sm text-slate-600">Every summary is generated with Gemini's hosted AI, so no local model download is needed.</p>
             </div>
         </aside>
     </div>

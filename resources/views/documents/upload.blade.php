@@ -143,7 +143,7 @@
                 </li>
                 <li class="flex items-start gap-3">
                     <span class="mt-1 h-2 w-2 rounded-full bg-amber-500"></span>
-                    Secure uploads with local Ollama processing.
+                    Hosted Gemini processing without downloading a local AI model.
                 </li>
             </ul>
         </div>

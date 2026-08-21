@@ -1,7 +1,8 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\DocumentController;
+use App\Services\DocumentProcessingService;
+use Illuminate\Support\Facades\Route;
 
 /*
 |--------------------------------------------------------------------------
@@ -17,25 +18,21 @@ Route::get('/documents/{id}', [DocumentController::class, 'show'])->name('docume
 Route::get('/documents/{id}/download', [DocumentController::class, 'download'])->name('documents.download');
 Route::delete('/documents/{id}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 
+Route::get('/ai-test', function (DocumentProcessingService $processingService) {
+    try {
+        $response = $processingService->testAiConnection();
+
+        if ($response) {
+            return 'Gemini is working. Response: ' . $response;
+        }
+
+        return 'Gemini did not return a response. Check GEMINI_API_KEY and GEMINI_MODEL in your .env file.';
+    } catch (Exception $e) {
+        return 'Connection error: ' . $e->getMessage();
+    }
+});
+
 // Fallback route for any undefined routes
 Route::fallback(function () {
     return redirect()->route('documents.upload');
-});
-
-Route::get('/ollama-test', function() {
-    try {
-        $response = Http::timeout(30)->post('http://localhost:11434/api/generate', [
-            'model' => 'llama3.2:3b',
-            'prompt' => 'Say "Ollama is working!" in one sentence',
-            'stream' => false
-        ]);
-        
-        if ($response->successful()) {
-            return '✅ Ollama is working! Response: ' . $response->json('response');
-        } else {
-            return '❌ Ollama error: ' . $response->body();
-        }
-    } catch (Exception $e) {
-        return '❌ Connection error: ' . $e->getMessage();
-    }
 });
