@@ -3,12 +3,12 @@
 namespace App\Services;
 
 use App\Models\Document;
-use Smalot\PdfParser\Parser;
-use PhpOffice\PhpWord\IOFactory;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Log;
 use Exception;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use PhpOffice\PhpWord\IOFactory;
+use Smalot\PdfParser\Parser;
 
 class DocumentProcessingService
 {
@@ -20,25 +20,34 @@ class DocumentProcessingService
     public function processDocument(Document $document): Document
     {
         // Allow longer processing time for hosted AI summarization
-        @ini_set('max_execution_time', '300');
-        @set_time_limit(300);
+        @ini_set('max_execution_time', '180');
+        @set_time_limit(180);
 
         try {
             Log::info('Starting document processing', ['document_id' => $document->id]);
 
             // Get the full file path
-            $filePath = Storage::disk('public')->path($document->file_path);
+            $filePath = Storage::disk('local')->path($document->file_path);
 
             // Extract text based on file type
             $extractedText = $this->extractText($filePath, $document->mime_type);
 
             // Generate summary using a hosted Gemini free-tier model.
+            if (trim($extractedText) === '') {
+                throw new Exception('No readable text found. Scanned PDFs need OCR before upload.');
+            }
+            if (mb_strlen($extractedText) > 200000) {
+                throw new Exception('Document is too long. Split it into smaller documents.');
+            }
+
             $summary = $this->generateSummaryWithGemini($extractedText, $document->summary_length);
 
             // Update document with summary and key points
             $document->update([
                 'summary' => $summary['summary'],
-                'key_points' => $summary['key_points']
+                'key_points' => $summary['key_points'],
+                'status' => 'completed',
+                'processing_error' => null,
             ]);
 
             Log::info('Document processed successfully', ['document_id' => $document->id]);
@@ -46,8 +55,8 @@ class DocumentProcessingService
             return $document;
 
         } catch (Exception $e) {
-            Log::error('Document processing failed: ' . $e->getMessage());
-            throw new Exception('Document processing failed: ' . $e->getMessage());
+            Log::error('Document processing failed', ['exception_type' => get_class($e)]);
+            throw new Exception('Document processing failed: '.$e->getMessage());
         }
     }
 
@@ -60,7 +69,7 @@ class DocumentProcessingService
             'application/pdf' => $this->extractFromPdf($filePath),
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => $this->extractFromDocx($filePath),
             'text/plain' => $this->extractFromTxt($filePath),
-            default => throw new Exception('Unsupported file type: ' . $mimeType)
+            default => throw new Exception('Unsupported file type: '.$mimeType)
         };
     }
 
@@ -69,8 +78,9 @@ class DocumentProcessingService
      */
     private function extractFromPdf(string $filePath): string
     {
-        $parser = new Parser();
+        $parser = new Parser;
         $pdf = $parser->parseFile($filePath);
+
         return $pdf->getText();
     }
 
@@ -82,18 +92,21 @@ class DocumentProcessingService
         $phpWord = IOFactory::load($filePath);
         $text = '';
 
-        foreach ($phpWord->getSections() as $section) {
-            foreach ($section->getElements() as $element) {
-                if (method_exists($element, 'getText')) {
-                    $text .= $element->getText() . "\n";
-                } elseif (method_exists($element, 'getElements')) {
-                    foreach ($element->getElements() as $childElement) {
-                        if (method_exists($childElement, 'getText')) {
-                            $text .= $childElement->getText() . "\n";
-                        }
-                    }
-                }
+        $collect = function ($element) use (&$collect): string {
+            if (method_exists($element, 'getRows')) {
+                return implode("\n", array_map($collect, $element->getRows()));
             }
+            if (method_exists($element, 'getCells')) {
+                return implode("\n", array_map($collect, $element->getCells()));
+            }
+            if (method_exists($element, 'getElements')) {
+                return implode("\n", array_map($collect, $element->getElements()));
+            }
+
+            return method_exists($element, 'getText') ? (string) $element->getText() : '';
+        };
+        foreach ($phpWord->getSections() as $section) {
+            $text .= $collect($section)."\n";
         }
 
         return $text;
@@ -116,11 +129,11 @@ class DocumentProcessingService
         $lengthInstructions = [
             'short' => 'a very concise summary in 2-3 sentences',
             'medium' => 'a balanced summary in about 5-7 sentences',
-            'detailed' => 'a comprehensive detailed summary covering all important aspects'
+            'detailed' => 'a comprehensive detailed summary covering all important aspects',
         ];
 
         // Condense text if too long (avoid timeouts)
-        $text = $this->condenseTextIfNeeded($text, $length);
+        // Summarize the complete text; never silently truncate legal clauses.
 
         // Prepare the prompt
         $prompt = "You are a legal document summarizer specializing in Nigerian legal and government documents.
@@ -151,9 +164,9 @@ Respond ONLY with the JSON object, no other text.";
             Log::info('Calling Gemini for summarization');
 
             $numPredict = match ($length) {
-                'short' => 400,
-                'medium' => 700,
-                'detailed' => 1200,
+                'short' => 2048,
+                'medium' => 4096,
+                'detailed' => 8192,
                 default => 700
             };
 
@@ -169,26 +182,11 @@ Respond ONLY with the JSON object, no other text.";
                     return $result;
                 }
 
-                Log::error('Failed to parse Gemini response as JSON', [
-                    'response' => substr($content, 0, 500)
-                ]);
-
-                return [
-                    'summary' => $content,
-                    'key_points' => ['Summary generated by Gemini']
-                ];
+                throw new Exception('AI returned an invalid summary. Please retry.');
             }
-
-            Log::error('Gemini API returned no content');
-            return $this->getFallbackSummary($text, $length);
-
+            throw new Exception('AI processing failed. Check the Gemini API key, model, and quota, then retry.');
         } catch (Exception $e) {
-            Log::error('Gemini exception', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return $this->getFallbackSummary($text, $length);
+            throw new Exception('AI processing failed. Check the Gemini API key, model, and quota, then retry.');
         }
     }
 
@@ -200,22 +198,25 @@ Respond ONLY with the JSON object, no other text.";
 
         preg_match('/\{.*\}/s', $content, $matches);
 
-        if (!isset($matches[0])) {
+        if (! isset($matches[0])) {
             return null;
         }
 
         try {
             $result = json_decode($matches[0], true, 512, JSON_THROW_ON_ERROR);
 
-            if (isset($result['summary']) && isset($result['key_points']) && is_array($result['key_points'])) {
+            if (is_string($result['summary'] ?? null) && trim($result['summary']) !== ''
+                && is_array($result['key_points'] ?? null) && array_is_list($result['key_points'])
+                && count($result['key_points']) > 0
+                && count(array_filter($result['key_points'], fn ($point) => is_string($point) && trim($point) !== '')) === count($result['key_points'])) {
                 return [
                     'summary' => $result['summary'],
-                    'key_points' => $result['key_points']
+                    'key_points' => $result['key_points'],
                 ];
             }
         } catch (\JsonException $e) {
             Log::error('Summary JSON parse failed', [
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
         }
 
@@ -234,13 +235,14 @@ Respond ONLY with the JSON object, no other text.";
     {
         $apiKey = config('services.gemini.key');
 
-        if (!$apiKey) {
+        if (! $apiKey) {
             Log::error('Gemini API key is not configured');
+
             return null;
         }
 
         $model = config('services.gemini.model', 'gemini-3.5-flash-lite');
-        $url = self::GEMINI_BASE_URL . '/' . $model . ':generateContent';
+        $url = self::GEMINI_BASE_URL.'/'.$model.':generateContent';
 
         $generationConfig = [
             'temperature' => 0.3,
@@ -251,8 +253,8 @@ Respond ONLY with the JSON object, no other text.";
             $generationConfig['responseMimeType'] = 'application/json';
         }
 
-        $response = Http::timeout($timeoutSeconds)->withQueryParameters([
-            'key' => $apiKey,
+        $response = Http::connectTimeout(10)->timeout($timeoutSeconds)->withHeaders([
+            'x-goog-api-key' => $apiKey,
         ])->post($url, [
             'contents' => [
                 [
@@ -279,71 +281,9 @@ Respond ONLY with the JSON object, no other text.";
 
         Log::error('Gemini API error', [
             'status' => $response->status(),
-            'body' => $response->body()
+            // Do not log provider responses containing document content.
         ]);
 
         return null;
-    }
-
-    /**
-     * Condense long input with fast chunk summaries to avoid timeouts
-     */
-    private function condenseTextIfNeeded(string $text, string $length): string
-    {
-        $maxLength = match ($length) {
-            'short' => 6000,
-            'medium' => 8000,
-            'detailed' => 10000,
-            default => 8000
-        };
-
-        if (strlen($text) <= $maxLength) {
-            return $text;
-        }
-
-        $chunkSize = 3000;
-        $chunks = str_split($text, $chunkSize);
-        $chunkSummaries = [];
-
-        foreach ($chunks as $index => $chunk) {
-            $chunkPrompt = "Summarize this Nigerian legal document section in 2-3 sentences, plain text only.\n\nSection: {$chunk}";
-            $chunkSummary = $this->callGemini($chunkPrompt, 250, 60);
-
-            if ($chunkSummary === null) {
-                Log::warning('Chunk summarization failed, falling back to truncation', ['chunk' => $index]);
-                return substr($text, 0, $maxLength) . "... [Text truncated due to length]";
-            }
-
-            $chunkSummaries[] = $chunkSummary;
-        }
-
-        return implode("\n", $chunkSummaries);
-    }
-
-    /**
-     * Fallback summary if Gemini is not configured or the API call fails.
-     */
-    private function getFallbackSummary(string $text, string $length): array
-    {
-        Log::info('Using fallback summary', ['text_length' => strlen($text), 'summary_type' => $length]);
-
-        $wordCount = str_word_count($text);
-        $summaryLength = match ($length) {
-            'short' => min(50, intval($wordCount * 0.1)),
-            'medium' => min(150, intval($wordCount * 0.2)),
-            'detailed' => min(300, intval($wordCount * 0.3))
-        };
-
-        $words = str_word_count($text, 1);
-        $summary = implode(' ', array_slice($words, 0, $summaryLength));
-
-        return [
-            'summary' => "This is a sample {$length} summary. Original text has {$wordCount} words. {$summary}...",
-            'key_points' => [
-                'Gemini API is not configured or did not respond',
-                'Add a valid GEMINI_API_KEY to your environment',
-                'The document text was extracted successfully'
-            ]
-        ];
     }
 }

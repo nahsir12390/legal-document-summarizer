@@ -42,7 +42,7 @@
                 </div>
             </div>
 
-            @if($document->summary)
+            @if($document->status === 'completed' && $document->summary)
                 <div class="glass rounded-3xl p-6 shadow-soft">
                     <div class="flex items-center gap-2 mb-4">
                         <i class="fas fa-align-left text-brand-600"></i>
@@ -66,6 +66,15 @@
                             </li>
                         @endforeach
                     </ul>
+                </div>
+            @elseif($document->status === 'failed')
+                <div class="glass rounded-3xl p-6 text-red-700">
+                    <h2 class="font-semibold">Processing failed</h2>
+                    <p>{{ $document->processing_error }}</p>
+                    <form action="{{ route('documents.retry', $document->id) }}" method="POST" class="mt-4">
+                        @csrf
+                        <button type="submit" class="rounded-xl bg-brand-600 px-4 py-2 text-white">Retry processing</button>
+                    </form>
                 </div>
             @else
                 <div class="glass rounded-3xl p-8 shadow-soft text-center">
@@ -115,7 +124,7 @@
     </div>
 </div>
 
-@if(!$document->summary)
+@if(in_array($document->status, ['queued', 'processing']))
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             let countdown = 10;

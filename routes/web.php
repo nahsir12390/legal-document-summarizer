@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\DocumentController;
-use App\Services\DocumentProcessingService;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -12,25 +11,13 @@ use Illuminate\Support\Facades\Route;
 
 // Traditional Controller Routes (No Livewire)
 Route::get('/', [DocumentController::class, 'create'])->name('documents.upload');
-Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
+Route::post('/documents', [DocumentController::class, 'store'])->middleware('throttle:10,1')->name('documents.store');
 Route::get('/documents', [DocumentController::class, 'index'])->name('documents.index');
 Route::get('/documents/{id}', [DocumentController::class, 'show'])->name('documents.show');
 Route::get('/documents/{id}/download', [DocumentController::class, 'download'])->name('documents.download');
 Route::delete('/documents/{id}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 
-Route::get('/ai-test', function (DocumentProcessingService $processingService) {
-    try {
-        $response = $processingService->testAiConnection();
-
-        if ($response) {
-            return 'Gemini is working. Response: ' . $response;
-        }
-
-        return 'Gemini did not return a response. Check GEMINI_API_KEY and GEMINI_MODEL in your .env file.';
-    } catch (Exception $e) {
-        return 'Connection error: ' . $e->getMessage();
-    }
-});
+Route::post('/documents/{id}/retry', [DocumentController::class, 'retry'])->middleware('throttle:5,1')->name('documents.retry');
 
 // Fallback route for any undefined routes
 Route::fallback(function () {

@@ -15,13 +15,15 @@ class Document extends Model
      * @var array<int, string>
      */
     protected $fillable = [
+        'status',
+        'processing_error',
         'file_name',
         'file_path',
         'summary',
         'key_points',
         'summary_length',
         'file_size',
-        'mime_type'
+        'mime_type',
     ];
 
     /**
@@ -33,7 +35,7 @@ class Document extends Model
         'key_points' => 'array',
         'file_size' => 'integer',
         'created_at' => 'datetime',
-        'updated_at' => 'datetime'
+        'updated_at' => 'datetime',
     ];
 
     /**
@@ -43,12 +45,12 @@ class Document extends Model
     {
         $bytes = $this->file_size;
         $units = ['B', 'KB', 'MB', 'GB'];
-        
+
         for ($i = 0; $bytes > 1024; $i++) {
             $bytes /= 1024;
         }
-        
-        return round($bytes, 2) . ' ' . $units[$i];
+
+        return round($bytes, 2).' '.$units[$i];
     }
 
     /**
@@ -56,7 +58,7 @@ class Document extends Model
      */
     public function getFileIconAttribute(): string
     {
-        return match($this->mime_type) {
+        return match ($this->mime_type) {
             'application/pdf' => 'file-pdf',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'file-word',
             'text/plain' => 'file-alt',

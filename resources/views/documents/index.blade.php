@@ -78,13 +78,13 @@
                                     </div>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
-                                    @if($doc->summary)
+                                    @if($doc->status === 'completed')
                                         <span class="px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-700">
                                             {{ __('ui.history.status_completed') }}
                                         </span>
                                     @else
                                         <span class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">
-                                            {{ __('ui.history.status_processing') }}
+                                            {{ ucfirst($doc->status) }}
                                         </span>
                                     @endif
                                 </td>
